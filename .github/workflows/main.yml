@@ -1,0 +1,22 @@
+name: Test-pipeline | Build → Push → Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on:
+      - self-hosted
+      - onliest-test-runner
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      IMAGE_TAG: ${{ github.run_number }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY_URI: ${{ secrets.ECR_REPOSITORY_URI }}
