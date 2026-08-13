@@ -1,0 +1,11 @@
+# This section defines the services run by Docker Compose.
+services:
+  # Define a service named 'mfe-host-landing'
+  mfe-host-landing:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: .
+    # Map port 9496 on the host to port 3000 in the container
+    ports:
+      - "9496:3002"
+    # Restart the container automatically unless it is explicitly stopped
+    restart: unless-stopped
