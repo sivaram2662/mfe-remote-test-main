@@ -72,3 +72,20 @@ jobs:
             echo "Retrying push: ${REPO_URI}:v${IMAGE_TAG}"
             sudo docker push "${REPO_URI}:v${IMAGE_TAG}"
           fi
+          
+      - name: Export image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /opt/docker_compose_files/onliest-test-pipeline
+
+          echo "Updating docker-compose.yml with new image tag..."
+          sudo sed -i "s|image: .*onliest-test-pipeline:.*|image: ${ECR_REPOSITORY_URI}:v${IMAGE_TAG}|g" docker-compose.yml
+          echo "Pulling latest image..."
+          docker compose pull
+
+          echo "Restarting application..."
+          docker compose down
+          docker compose up -d
+
+          echo "Deployment completed successfully "
