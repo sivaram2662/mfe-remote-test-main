@@ -21,3 +21,54 @@ jobs:
       IMAGE_TAG: ${{ github.run_number }}
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       ECR_REPOSITORY_URI: ${{ secrets.ECR_REPOSITORY_URI }}
+      
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          
+      - name: Log in to Amazon ECR (initial)
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Create .env file from GitHub Secret
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cat << 'EOF' > .env
+          ${{ secrets.TEST_REPO_ENV }}
+          EOF
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Building image with tag: v${IMAGE_TAG}"
+          sudo docker build -t onliest-test-pipeline:v${IMAGE_TAG} .
+          
+      - name: Tag image to ECR URI
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO_URI="${ECR_REPOSITORY_URI}"
+          echo "Tagging image onliest-test-pipeline:v${IMAGE_TAG} -> ${REPO_URI}:v${IMAGE_TAG}"
+          sudo docker tag onliest-test-pipeline:v${IMAGE_TAG} ${REPO_URI}:v${IMAGE_TAG}
+
+      - name: Push Docker image to ECR (retry login on failure)
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO_URI="${ECR_REPOSITORY_URI}"
+
+          echo "Attempting initial push: ${REPO_URI}:v${IMAGE_TAG}"
+          if sudo docker push "${REPO_URI}:v${IMAGE_TAG}"; then
+            echo "Pushed ${REPO_URI}:v${IMAGE_TAG} successfully (first attempt)."
+          else
+            echo "Initial push failed. Logging into ECR via aws cli and retrying..."
+            aws ecr get-login-password --region "${AWS_REGION}" \
+              | sudo docker login --username AWS --password-stdin "$(echo "${REPO_URI}" | awk -F'/' '{print $1}')"
+            echo "Retrying push: ${REPO_URI}:v${IMAGE_TAG}"
+            sudo docker push "${REPO_URI}:v${IMAGE_TAG}"
+          fi
