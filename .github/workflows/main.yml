@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 permissions:
@@ -12,6 +13,7 @@ permissions:
 
 jobs:
   build-and-push:
+
     runs-on:
       - self-hosted
       - onliest-test-pipeline
@@ -21,15 +23,16 @@ jobs:
       IMAGE_TAG: ${{ github.run_number }}
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       ECR_REPOSITORY_URI: ${{ secrets.ECR_REPOSITORY_URI }}
-      
+
     steps:
+
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-          
-      - name: Log in to Amazon ECR (initial)
+
+      - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
@@ -41,51 +44,144 @@ jobs:
           cat << 'EOF' > .env
           ${{ secrets.TEST_REPO_ENV }}
           EOF
+
       - name: Build Docker image
         shell: bash
         run: |
           set -euo pipefail
-          echo "Building image with tag: v${IMAGE_TAG}"
-          sudo docker build -t onliest-test-pipeline:v${IMAGE_TAG} .
-          
-      - name: Tag image to ECR URI
+
+          echo "=========================================="
+          echo "Building Docker image"
+          echo "Image Tag: v${IMAGE_TAG}"
+          echo "=========================================="
+
+          sudo docker build \
+            -t onliest-test-pipeline:v${IMAGE_TAG} \
+            .
+
+      - name: Tag image for ECR
         shell: bash
         run: |
           set -euo pipefail
-          REPO_URI="${ECR_REPOSITORY_URI}"
-          echo "Tagging image onliest-test-pipeline:v${IMAGE_TAG} -> ${REPO_URI}:v${IMAGE_TAG}"
-          sudo docker tag onliest-test-pipeline:v${IMAGE_TAG} ${REPO_URI}:v${IMAGE_TAG}
 
-      - name: Push Docker image to ECR (retry login on failure)
+          echo "Tagging Docker image..."
+
+          sudo docker tag \
+            onliest-test-pipeline:v${IMAGE_TAG} \
+            ${ECR_REPOSITORY_URI}:v${IMAGE_TAG}
+
+          echo "Image tagged as:"
+          echo "${ECR_REPOSITORY_URI}:v${IMAGE_TAG}"
+
+      - name: Push Docker image to ECR
         shell: bash
         run: |
           set -euo pipefail
-          REPO_URI="${ECR_REPOSITORY_URI}"
 
-          echo "Attempting initial push: ${REPO_URI}:v${IMAGE_TAG}"
-          if sudo docker push "${REPO_URI}:v${IMAGE_TAG}"; then
-            echo "Pushed ${REPO_URI}:v${IMAGE_TAG} successfully (first attempt)."
+          echo "=========================================="
+          echo "Pushing image to ECR"
+          echo "Repository: ${ECR_REPOSITORY_URI}"
+          echo "Tag: v${IMAGE_TAG}"
+          echo "=========================================="
+
+          if sudo docker push "${ECR_REPOSITORY_URI}:v${IMAGE_TAG}"; then
+
+            echo "Image pushed successfully."
+
           else
-            echo "Initial push failed. Logging into ECR via aws cli and retrying..."
-            aws ecr get-login-password --region "${AWS_REGION}" \
-              | sudo docker login --username AWS --password-stdin "$(echo "${REPO_URI}" | awk -F'/' '{print $1}')"
-            echo "Retrying push: ${REPO_URI}:v${IMAGE_TAG}"
-            sudo docker push "${REPO_URI}:v${IMAGE_TAG}"
+
+            echo "Initial push failed."
+            echo "Logging into ECR again..."
+
+            aws ecr get-login-password \
+              --region "${AWS_REGION}" \
+              | sudo docker login \
+                  --username AWS \
+                  --password-stdin \
+                  "$(echo "${ECR_REPOSITORY_URI}" | awk -F'/' '{print $1}')"
+
+            echo "Retrying Docker push..."
+
+            sudo docker push \
+              "${ECR_REPOSITORY_URI}:v${IMAGE_TAG}"
+
           fi
-          
-      - name: Export image
+
+      - name: Verify image exists locally
         shell: bash
         run: |
           set -euo pipefail
-          cd /opt/docker_compose_files/onliest-test-pipeline
 
-          echo "Updating docker-compose.yml with new image tag..."
-          sudo sed -i "s|image: .*onliest-test-pipeline:.*|image: ${ECR_REPOSITORY_URI}:v${IMAGE_TAG}|g" docker-compose.yml
+          echo "Checking pushed image..."
+
+          sudo docker image inspect \
+            "${ECR_REPOSITORY_URI}:v${IMAGE_TAG}" \
+            > /dev/null
+
+          echo "Image verification successful."
+
+      - name: Deploy application
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          COMPOSE_DIR="/opt/docker_compose_files/onliest-test-pipeline"
+
+          cd "${COMPOSE_DIR}"
+
+          echo "=========================================="
+          echo "Deployment Information"
+          echo "=========================================="
+
+          echo "Repository:"
+          echo "${ECR_REPOSITORY_URI}"
+
+          echo "Image Tag:"
+          echo "v${IMAGE_TAG}"
+
+          echo "Full Image:"
+          echo "${ECR_REPOSITORY_URI}:v${IMAGE_TAG}"
+
+          echo "=========================================="
+
+          echo ""
+          echo "Current docker-compose.yml:"
+          echo "------------------------------------------"
+
+          sudo cat docker-compose.yml
+
+          echo ""
+          echo "Updating Docker image..."
+
+          sudo sed -i \
+            "s|^[[:space:]]*image:.*|    image: ${ECR_REPOSITORY_URI}:v${IMAGE_TAG}|" \
+            docker-compose.yml
+
+          echo ""
+          echo "Updated docker-compose.yml:"
+          echo "------------------------------------------"
+
+          sudo cat docker-compose.yml
+
+          echo ""
           echo "Pulling latest image..."
-          docker compose pull
 
-          echo "Restarting application..."
-          docker compose down
-          docker compose up -d
+          sudo docker compose pull
 
-          echo "Deployment completed successfully "
+          echo ""
+          echo "Stopping existing container..."
+
+          sudo docker compose down
+
+          echo ""
+          echo "Starting updated container..."
+
+          sudo docker compose up -d
+
+          echo ""
+          echo "Checking container status..."
+
+          sudo docker compose ps
+
+          echo ""
+          echo "Deployment completed successfully."
